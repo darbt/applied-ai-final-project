@@ -2,7 +2,7 @@ from datetime import date, time
 
 import streamlit as st
 
-from pawpal_system import PlanEntry, Priority, Scheduler, Task
+from pawpal_system import PlanEntry, Priority, RiskLevel, Scheduler, Task
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -49,17 +49,42 @@ with col3:
     due = st.date_input("Due date", value=date.today())
     start = st.time_input("Start time", value=time(8, 0))
 
-if st.button("Add task"):
-    st.session_state.tasks.append(
-        Task(
-            title=task_title,
-            duration=int(duration),
-            priority=PRIORITY_MAP[priority],
-            pet_name=task_pet,
-            due_date=due,
-            start_time=start,
-        )
+# --- Risk-prediction inputs: history + recurrence feed the risk estimate. ----
+col4, col5 = st.columns(2)
+with col4:
+    times_late = st.number_input(
+        "Times late previously",
+        min_value=0,
+        max_value=99,
+        value=0,
+        help="How many past occurrences of this task were missed or done late.",
     )
+with col5:
+    is_recurring = st.checkbox(
+        "Recurring task",
+        value=False,
+        help="Repeats on a schedule — routine chores are easy to forget.",
+    )
+    recurrence_days = None
+    if is_recurring:
+        recurrence_days = st.number_input(
+            "Repeats every N days", min_value=1, max_value=365, value=1
+        )
+
+if st.button("Add task"):
+    new_task = Task(
+        title=task_title,
+        duration=int(duration),
+        priority=PRIORITY_MAP[priority],
+        pet_name=task_pet,
+        due_date=due,
+        start_time=start,
+        times_late=int(times_late),
+        recurrence_days=int(recurrence_days) if recurrence_days else None,
+    )
+    # Predict up front so the task carries its risk level and explanation.
+    new_task.assess_risk()
+    st.session_state.tasks.append(new_task)
 
 st.divider()
 
@@ -67,21 +92,30 @@ st.divider()
 st.subheader("Current tasks")
 
 PRIORITY_BADGE = {"HIGH": "🔴 High", "MEDIUM": "🟡 Medium", "LOW": "🟢 Low"}
+RISK_BADGE = {"HIGH": "🔴 High", "MEDIUM": "🟠 Medium", "LOW": "🟢 Low"}
 
 if not st.session_state.tasks:
     st.info("No tasks yet. Add one above.")
 else:
     scheduler_view = Scheduler()
 
+    # Re-run the prediction so risk reflects today's date (a task can slip to
+    # "overdue" just by time passing since it was added).
+    for t in st.session_state.tasks:
+        t.assess_risk()
+
     # At-a-glance summary of the whole task set.
     all_tasks = st.session_state.tasks
     done_tasks = scheduler_view.filter_by_completion(all_tasks, completed=True)
     todo_tasks = scheduler_view.filter_by_completion(all_tasks, completed=False)
+    at_risk = [
+        t for t in todo_tasks if t.risk_level in (RiskLevel.MEDIUM, RiskLevel.HIGH)
+    ]
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total tasks", len(all_tasks))
     m2.metric("To-do", len(todo_tasks))
     m3.metric("Completed", len(done_tasks))
-    m4.metric("Minutes of care", sum(t.duration for t in todo_tasks))
+    m4.metric("At risk", len(at_risk), help="To-do tasks with medium or high risk.")
 
     # Scheduler.sort_* methods let the owner reorder the same task set by
     # different criteria without mutating the underlying list.
@@ -111,6 +145,12 @@ else:
                 "Due": t.due_date.isoformat() if t.due_date else "—",
                 "Duration": t.duration,
                 "Priority": PRIORITY_BADGE.get(t.priority.name, t.priority.name),
+                "Recurring": "🔁 Yes" if t.is_recurring else "—",
+                "Late before": t.times_late,
+                "Risk": RISK_BADGE.get(
+                    t.risk_level.name if t.risk_level else "", "—"
+                ),
+                "Why": t.risk_explanation,
                 "Status": "✅ Done" if t.completed else "⏳ To-do",
             }
             for t in tasks_to_show
@@ -119,8 +159,20 @@ else:
         hide_index=True,
         column_config={
             "Duration": st.column_config.NumberColumn("Duration", format="%d min"),
+            "Late before": st.column_config.NumberColumn("Late before", format="%d×"),
+            "Why": st.column_config.TextColumn("Why", width="large"),
         },
     )
+
+    # Spotlight the tasks the risk model thinks are most likely to slip.
+    high_risk = [t for t in todo_tasks if t.risk_level is RiskLevel.HIGH]
+    if high_risk:
+        st.error(
+            "⚠️ **Likely to be missed or late:** "
+            + ", ".join(f"{t.title} ({t.pet_name})" for t in high_risk)
+        )
+        for t in high_risk:
+            st.caption(f"• **{t.title}** — {t.risk_explanation}")
 
     # Let the owner mark tasks complete so filter_by_completion is visible.
     open_tasks = todo_tasks

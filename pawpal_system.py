@@ -22,6 +22,14 @@ class Priority(Enum):
     LOW = 1
 
 
+class RiskLevel(Enum):
+    """How likely a task is to be missed or finished late."""
+
+    HIGH = 3
+    MEDIUM = 2
+    LOW = 1
+
+
 @dataclass
 class Task:
     """A single pet care task (walk, feeding, meds, etc.)."""
@@ -34,12 +42,96 @@ class Task:
     priority: Priority = Priority.MEDIUM
     pet_name: str = ""  # which pet this task belongs to (for display)
     recurrence_days: int | None = None  # repeat every N days; None = one-off
+    times_late: int = 0  # how many past occurrences were missed or done late
     id: str = field(default_factory=lambda: uuid4().hex)
     completed: bool = False
+    # Filled in by assess_risk(); None until a prediction has been made.
+    risk_level: RiskLevel | None = None
+    risk_explanation: str = ""
+
+    @property
+    def is_recurring(self) -> bool:
+        """True if this task repeats on a schedule (has a recurrence interval)."""
+        return self.recurrence_days is not None
 
     def mark_complete(self) -> None:
         """Mark this task as done."""
         self.completed = True
+
+    def assess_risk(self, today: date | None = None) -> RiskLevel:
+        """Predict how likely this task is to be missed or finished late.
+
+        Combines a few simple signals into a risk score, then buckets that
+        score into LOW / MEDIUM / HIGH. The result is stored on the task
+        (risk_level and a human-readable risk_explanation) and also returned.
+
+        Signals used:
+          * times_late   — a history of lateness is the strongest predictor.
+          * due_date      — overdue or due-today tasks are riskier than ones
+                            with runway left.
+          * duration      — long tasks are easier to put off.
+          * priority      — low-priority tasks tend to get bumped.
+          * is_recurring  — routine tasks are easy to forget on any given day.
+        """
+        if today is None:
+            today = date.today()
+
+        score = 0
+        reasons: list[str] = []
+
+        # History of lateness: each past slip adds weight (capped so one very
+        # unreliable task doesn't drown out every other signal).
+        if self.times_late > 0:
+            score += min(self.times_late, 3) * 2
+            times = "time" if self.times_late == 1 else "times"
+            reasons.append(f"late {self.times_late} {times} before")
+
+        # Deadline pressure.
+        if self.due_date is not None:
+            if self.due_date < today:
+                score += 3
+                reasons.append("already overdue")
+            elif self.due_date == today:
+                score += 1
+                reasons.append("due today")
+
+        # Longer tasks are easier to procrastinate on.
+        if self.duration > 60:
+            score += 2
+            reasons.append("long task (over 60 min)")
+        elif self.duration > 30:
+            score += 1
+            reasons.append("moderately long task (over 30 min)")
+
+        # Low-priority work is the first to get dropped when time is tight.
+        if self.priority is Priority.LOW:
+            score += 2
+            reasons.append("low priority, easy to deprioritize")
+        elif self.priority is Priority.MEDIUM:
+            score += 1
+
+        # Recurring chores are easy to forget on any given day.
+        if self.is_recurring:
+            score += 1
+            reasons.append("recurring routine, easy to forget")
+
+        if score >= 5:
+            self.risk_level = RiskLevel.HIGH
+        elif score >= 2:
+            self.risk_level = RiskLevel.MEDIUM
+        else:
+            self.risk_level = RiskLevel.LOW
+
+        if reasons:
+            self.risk_explanation = (
+                f"{self.risk_level.name} risk — " + "; ".join(reasons) + "."
+            )
+        else:
+            self.risk_explanation = (
+                f"{self.risk_level.name} risk — no warning signs; "
+                "on track to finish on time."
+            )
+        return self.risk_level
 
     def next_occurrence(self) -> Task | None:
         """Build the next instance of a recurring task, or None if one-off.
