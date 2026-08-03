@@ -1,175 +1,115 @@
-# PawPal+ (Module 2 Project)
+Pawpal + 
+- A scheduler to help pet owners organize tasks for their pets. The scheduler, can asssign pets, track tasks duration, generate a daily schedule, and other small features that assist in prioritizing to-dos. 
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+Pawapl 2.0 
+- A smart pet care-planning program that pet owners can organize and manage daily responsibilites tied to their pets. Pawpal 2.0 has the same capabilities as its predecessor as well as an explainable risk-assesment system which evaluates each unfinished task and assigns a risk score of how likely a task would be missed or late. 
+This program matters because it helps reduce the probklems for forgetting both important and minor task regarding the pet. It helps the user determine what tasks have the highest priority and helps the user avoid feeling overwhelmed with all the different tasks
 
-## Scenario
+System Design
+Three Main components: 
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+1. Streamlit User Interface
+The UI that allows the user to utilize the program's features and stores an active task list in the session state while the application is running
+2. Domain and Risk Model
+The risk model takes the classes of the pawpal_system class and examines several task signals like due date, task duration, priority, etc and combines them to determine a risk score. The risk scoere then assigns result of either low, medium, or high. 
+3. Scheduling and Reliablity Checks
+There is a conflict checker to make sure that there are no conflicts in scheduling with overlapping tasks. The diagram also includes automated tests to checkthat the program behaves consistently and efficently. 
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+Instructions
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+Before starting, make sure the following are installed:
 
-## What you will build
+Python 3.10 or newer
+A code editor such as Visual Studio Code
+A terminal, PowerShell, or Command Prompt
 
-Your final app should:
+Run:
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
+python -m streamlit run app.py
 
-## Getting started
+Streamlit should open PawPal+ in a web browser.
 
-### Setup
+After the app opens:
 
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+1. Enter the owner’s name.
+2. Enter one or more pet names separated by commas.
+3. Add a task title.
+4. Select the pet connected to the task.
+5. Enter the task duration.
+6. Choose its priority.
+7. Select its due date and start time.
+8. Enter how many times the task was previously late.
+9. Select whether it is recurring.
+10. Click Add task.
 
-### Suggested workflow
+The task will appear in the current-task section with:
 
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
+Priority
+Completion status
+Recurrence status
+Previous late count
+Predicted risk level
+Explanation and confidence
 
-## 🖥️ Sample Output
+Use the available controls to edit, delete, complete, sort, or filter tasks.
 
-Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
+To build a schedule:
 
-Before Formatting : 
-    ```
-    Scheduled 2 task(s) using 40 of 60 available minutes, ordered by priority (highest first):
-  08:00 — Feeding (10 min) [priority: high]
-  08:10 — Walk (30 min) [priority: high]
-    ```
+1. Enter the number of minutes available that day.
+2. Click Generate schedule.
+3. Review the scheduled tasks, used time, and remaining time.
 
-After Formatting: 
-    ```
-     Daily Plan
-  -------------------------------------
-  08:00-08:10   Feeding       10m  HIGH
-  08:10-08:40   Walk          30m  HIGH
-  -------------------------------------
-  2 task(s) · 40/60 min used · 20 min free
-    ```
+To check for conflicts:
 
-```
-# e.g.:
-# Daily plan for Biscuit (Golden Retriever):
-#   08:00 — Morning walk (30 min) [priority: high]
-#   09:00 — Feeding (10 min) [priority: high]
-#   ...
-```
+1. Give tasks their intended start times.
+2. Click Check for conflicts.
+3. Review any overlap warnings.
 
-## 🧪 Testing PawPal+
+Sample Inputs and Outputs
 
-```bash
-# Run the full test suite:
-python -m pytest
+INPUT: show_risk("Luna (expect HIGH, then LOW):", pet3.tasks)
 
-# Run with coverage:
-pytest --cov
-```
+OUTPUT:
+=== Risk scoring demo (today = 2026-08-03) ===
 
-Recurrence:	one-off → None; fresh id + completed=False on the copy while source stays completed; due-date advances by recurrence_days incl. month rollover (Jul 30 → Aug 2); None due-date survives; complete_task appends exactly one tagged instance; one-offs add nothing (no cascade)
+Luna (expect HIGH, then LOW):
+  Luna   Vet visit    -> HIGH  
+         HIGH risk — late 2 times before; already overdue; moderately long task (over 30 min). (confidence: high, 95%)
+  Luna   Water        -> LOW   
+         LOW risk — no warning signs; on track to finish on time. (confidence: moderate, 65%)
 
-Sorting: 	HIGH-first ordering; the full tie-break chain (due_date → duration); None due-date sinks to the end via date.max; shortest-first; pet A–Z then priority; inputs never mutated; empty & single-item
+=== Sam's plan, annotated with risk ===
+  08:00  Luna   Water        [LOW]
+  08:05  Luna   Vet visit    [HIGH]
+  08:50  Milo   Litter box   [MEDIUM]
+  09:05  Milo   Dental treat [MEDIUM]
 
-Greedy packing:	the key case — skip a too-long task but keep a later shorter one; exact-fit kept (<=); zero budget keeps only zero-duration
+INPUT: show_risk("Milo (expect MEDIUM, MEDIUM):", pet4.tasks)
+show_risk("Bella (expect HIGH):", pet5.tasks)
 
-Conflicts:	back-to-back (touching) is NOT a conflict; different pets never conflict; overlap returns the pair in plan order; 3-way same-pet → all 3 pairs
+OUTPUT:
+=== Risk scoring demo (today = 2026-08-03) ===
 
-generate_plan:	completed tasks dropped; start times chain back-to-back; empty plan → the exact "nothing fit" string
+Milo (expect MEDIUM, MEDIUM):
+  Milo   Litter box   -> MEDIUM
+         MEDIUM risk — due today; recurring routine, easy to forget. (confidence: moderate, 60%)
+  Milo   Dental treat -> MEDIUM
+         MEDIUM risk — due today; low priority, easy to deprioritize; recurring routine, easy to forget. (confidence: moderate, 60%)
 
-explain_plan:	emits UserWarning and appends double-booked lines on conflict (pytest.warns)
+Bella (expect HIGH):
+  Bella  Cage clean   -> HIGH  
+         HIGH risk — already overdue; long task (over 60 min); low priority, easy to deprioritize. (confidence: moderate, 65%)
 
-# Paste your pytest output here
-```
-============================================================================================================== test session starts ===============================================================================================================
-platform win32 -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0
-rootdir: C:\Users\trida\CodePath Assignments\ai110-module2show-pawpal-starter
-collected 26 items                                                                                                                                                                                                                                
+=== Sam's plan, annotated with risk ===
+  08:00  Luna   Water        [LOW]
+  08:05  Luna   Vet visit    [HIGH]
+  08:50  Milo   Litter box   [MEDIUM]
+  09:05  Milo   Dental treat [MEDIUM]
 
-tests\test_pawpal.py ..........................                                                                                                                                                                                             [100%]
+Design Decisions
 
-=============================================================================================================== 26 passed in 0.03s ===============================================================================================================
+I built the program the way that I did because I wanted the predictions to be able to be explained clearly and easily. I also prioritized simplicity so that it is manageable and consistent. I also had to make sure that it was clear that results are a prediction and not certain. These design choices do come with trade offs. For example, as a result of the simplicty, the program is non-adaptive, it does not learn as it is transparent. So two users with different habits may recieve the same risk score for the same inputs which is not very accurate. 
 
+Testing Summary
 
-
-
-## 📐 Smarter Scheduling
-
-> Fill in once you've implemented scheduling logic.
-
-| Feature | Method(s) | Notes |
-|---------|-----------|-------|
-| Sorting behavior  | sort_by_time, sort_by_Pet| by priority and pet name  |
-| Filtering |filter_by_completion |skip tasks that are already completed|
-| Conflict handling | find_conflicts, has_conflicts, conflict_warnings |checks for overlapping time slots for the same pet and issues a warning  |
-
-
-## 📸 Demo Walkthrough
-
-Describe your app in numbered steps so a reader can follow along without watching a video:
-
-1. Input owner name and all the pets they own
-2. Add a task with title, pet name, duration, priority, due date, and start time
-3. Generate a schedule that shows all tasks. 
-4. Sort schedule by priority, duration, and pet name. Can also mark tasks as complete
-5. Check if there are any scheduling conflicts
-
-Features:
-
-🗂️ Task & Pet Modeling
-Structured tasks — each Task carries a title, description, due date, planned start time, duration (minutes), priority (HIGH/MEDIUM/LOW), owning pet, completion flag, and a unique id.
-Recurring tasks — Task.next_occurrence() clones a task and advances its due date by recurrence_days, producing a fresh, uncompleted instance. Pet.complete_task() marks a task done and auto-queues its next occurrence.
-Owner → Pet → Task hierarchy — Owner.all_tasks() flattens every task across all of an owner's pets into a single list.
-
-🔀 Sorting Algorithms
-All sorts are non-mutating (return a new list) and use deterministic tie-breaking for stable, testable output:
-
-sort_by_priority — highest priority first; ties broken by earlier due date, then shorter duration.
-
-sort_by_time — shortest duration first; ties broken by earlier due date, then higher priority.
-
-sort_by_pet — grouped alphabetically by pet name; ties broken by higher priority, then earlier due date.
-
-🔍 Filtering Algorithms
-filter_by_completion — keeps tasks matching a completion status (defaults to to-do), preserving order.
-filter_by_time — greedy knapsack-style packing: walks the list keeping each task that fits the remaining time budget and skipping those that don't, so a later short task can still slot in after an earlier long one was skipped.
-
-📅 Schedule Generation
-generate_plan — end-to-end pipeline: drop completed tasks → sort by priority → trim to the available-minutes budget → assign back-to-back start times from day_start, producing a time-ordered daily plan.
-
-⚠️ Conflict Detection
-find_conflicts — interval-overlap detection: pairwise scan flagging two tasks for the same pet whose [start, start + duration) windows overlap. Back-to-back tasks (one ends exactly as the next begins) are intentionally not conflicts.
-has_conflicts — boolean convenience check.
-conflict_warnings — human-readable warning line per conflict; non-fatal (reports problems without halting).
-
-🖥️ Presentation
-explain_plan — renders an aligned, terminal-friendly plan table with dynamically sized columns, a used/free-minutes footer, and appended conflict warnings (also emitting a runtime warnings.warn).
-Streamlit UI (app.py) — interactive front end exposing the sorters, completion filter, schedule builder, and conflict checker.
-
-```
- Daily Plan
-  ---------------------------------------------
-  08:00-08:30   Walk      Rocky     30m  HIGH
-  08:00-08:05   Meds      Cookie     5m  MEDIUM
-  08:00-08:10   Feeding   Rocky     10m  HIGH
-  ---------------------------------------------
-  3 task(s) · 45/60 min used · 15 min free
-  ---------------------------------------------
-  [!] Rocky double-booked: Walk (08:00) overlaps Feeding (08:00)
-
-=== program finished normally despite the conflict ===
-```
+The risk explainations worked as well as calculating the risk score. What didn't work was automatically creating a risk "scale", that would change based on the user. Meaning that a missed task should receive a different score because the users are different and do things differently. This proved to be to complicated and the outputs would constantly change even with the same information. 

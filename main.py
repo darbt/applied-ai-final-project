@@ -129,3 +129,103 @@ conflicting_plan = [
 # without stopping the program.
 print(scheduler.explain_plan(conflicting_plan))
 print("\n=== program finished normally despite the conflict ===")
+
+
+# ---------------------------------------------------------------------------
+# Demo: risk scoring and risk explanations.
+# A few more pets, each with tasks crafted to land on a different risk level,
+# so we can eyeball how assess_risk() turns signals (lateness, deadlines,
+# duration, priority, recurrence) into a LOW / MEDIUM / HIGH label plus a
+# plain-English explanation and a confidence.
+#
+# "today" is pinned so the deadline-pressure signal (overdue / due-today) is
+# reproducible regardless of when this file is actually run.
+# ---------------------------------------------------------------------------
+
+TODAY = date(2026, 8, 3)
+
+# Luna: one clearly-HIGH task (a repeat offender that's now overdue) and one
+# clearly-LOW task (short, high priority, with days of runway left).
+lunaVet = Task(
+    title="Vet visit",
+    description="Overdue annual checkup Luna keeps missing",
+    due_date=date(2026, 7, 30),          # overdue relative to TODAY  (+3)
+    duration=45,                          # moderately long (>30 min)  (+1)
+    priority=Priority.MEDIUM,             # medium priority            (+1)
+    times_late=2,                         # slipped twice before       (+4)
+)
+lunaWater = Task(
+    title="Water",
+    description="Top up Luna's water bowl",
+    due_date=date(2026, 8, 12),          # days of runway left        (+0)
+    duration=5,                           # quick                      (+0)
+    priority=Priority.HIGH,               # high priority              (+0)
+)
+pet3 = Pet(name="Luna", age=6, tasks=[lunaVet, lunaWater])
+
+# Milo: two MEDIUM tasks that get there different ways — one via a
+# due-today recurring chore, one via a low-priority recurring chore.
+miloLitter = Task(
+    title="Litter box",
+    description="Scoop Milo's litter box",
+    due_date=TODAY,                       # due today                  (+1)
+    duration=15,
+    priority=Priority.MEDIUM,             # medium priority            (+1)
+    recurrence_days=1,                    # daily routine              (+1)
+)
+miloTeeth = Task(
+    title="Dental treat",
+    description="Weekly dental chew for Milo",
+    due_date=TODAY,                       # due today                  (+1)
+    duration=10,
+    priority=Priority.LOW,                # low priority               (+2)
+    recurrence_days=7,                    # weekly routine             (+1)
+)
+pet4 = Pet(name="Milo", age=3, tasks=[miloLitter, miloTeeth])
+
+# Bella: a single very-HIGH task — long, low priority, and already overdue.
+bellaClean = Task(
+    title="Cage clean",
+    description="Deep-clean Bella's hutch",
+    due_date=date(2026, 8, 1),           # overdue                    (+3)
+    duration=90,                          # long task (>60 min)        (+2)
+    priority=Priority.LOW,                # low priority               (+2)
+)
+pet5 = Pet(name="Bella", age=1, tasks=[bellaClean])
+
+owner2 = Owner(
+    name="Sam",
+    email="sam@example.com",
+    pets=[pet3, pet4, pet5],
+)
+
+# Tag every task with its pet's name so the display lines read nicely.
+for pet in owner2.pets:
+    for task in pet.tasks:
+        task.pet_name = pet.name
+
+
+def show_risk(label, tasks):
+    """Assess each task's risk against TODAY and print the explanation."""
+    print(f"\n{label}")
+    for t in tasks:
+        t.assess_risk(today=TODAY)
+        print(f"  {t.pet_name:<6} {t.title:<12} -> {t.risk_level.name:<6}")
+        print(f"         {t.risk_explanation}")
+
+
+print("\n=== Risk scoring demo (today = 2026-08-03) ===")
+
+show_risk("Milo (expect MEDIUM, MEDIUM):", pet4.tasks)
+show_risk("Bella (expect HIGH):", pet5.tasks)
+
+# Schedule Sam's whole day, then list each planned task with its risk so the
+# owner can see which slots are the shaky ones.
+print("\n=== Sam's plan, annotated with risk ===")
+sam_scheduler = Scheduler(available_minutes=120)
+sam_plan = sam_scheduler.generate_plan(owner2.all_tasks())
+for entry in sam_plan:
+    entry.task.assess_risk(today=TODAY)
+    print(f"  {entry.start_time.strftime('%H:%M')}  "
+          f"{entry.task.pet_name:<6} {entry.task.title:<12} "
+          f"[{entry.task.risk_level.name}]")
