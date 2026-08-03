@@ -1,0 +1,69 @@
+flowchart TB
+    %% PawPal+ system diagram — main components, data flows, and testing.
+    %% Solid arrows = runtime data flow. Dashed arrows = what pytest verifies.
+
+    subgraph UI["🖥️ Presentation — app.py (Streamlit)"]
+        IN["Owner / Pet / Task input form<br/>(title, duration, priority, due,<br/>start time, times_late, recurrence)"]
+        CTRL["Sort / filter controls<br/>+ 'Show completed' toggle"]
+        GENBTN["Generate schedule<br/>(available_minutes budget)"]
+        CONFBTN["Conflict check<br/>(owner's own start times)"]
+        TABLE["Task table + summary metrics"]
+        RISKUI["⚠️ Risk badges &<br/>'likely to be missed / late' alert"]
+        PLANUI["📅 Rendered daily plan"]
+        WARNUI["⚠️ Conflict warnings"]
+    end
+
+    subgraph DOMAIN["🧠 Domain model — pawpal_system.py"]
+        TASK["Task<br/>next_occurrence()"]
+        RISK["assess_risk()<br/>→ RiskLevel + explanation"]
+        OWNERPET["Owner / Pet<br/>add_task · complete_task · all_tasks"]
+        SCHED["Scheduler<br/>sort_by_priority/time/pet<br/>filter_by_completion/time<br/>generate_plan"]
+        CONF["find_conflicts / has_conflicts<br/>conflict_warnings"]
+        PLAN["PlanEntry[]<br/>time-ordered plan"]
+        EXPLAIN["explain_plan()<br/>aligned table"]
+    end
+
+    subgraph STATE["📦 st.session_state.tasks"]
+        STORE["Live list of Task objects"]
+    end
+
+    subgraph TESTS["✅ Testing — tests/test_pawpal.py (pytest · 26 tests)"]
+        T["Checks results of:<br/>• recurrence (next_occurrence / complete_task)<br/>• sorting tie-breaks & non-mutation<br/>• greedy time-budget packing<br/>• conflict interval boundaries<br/>• generate_plan integration<br/>• explain_plan conflict warning"]
+    end
+
+    %% ---- Runtime data flow ----
+    IN -->|"new Task"| TASK
+    TASK --> RISK
+    RISK -->|"risk_level,<br/>risk_explanation"| STORE
+    TASK -->|"added via Pet.add_task"| STORE
+    STORE --> RISKUI
+
+    CTRL -->|"chosen sorter + filter"| SCHED
+    SCHED -->|"reordered / filtered tasks"| TABLE
+
+    GENBTN -->|"todo tasks + budget"| SCHED
+    SCHED --> PLAN
+    PLAN --> EXPLAIN
+    EXPLAIN -->|"plan text"| PLANUI
+
+    CONFBTN -->|"timed tasks → PlanEntry[]"| CONF
+    CONF -->|"warning lines"| WARNUI
+
+    STORE -.tasks.-> SCHED
+    OWNERPET --- TASK
+
+    %% ---- What testing verifies (dashed) ----
+    T -.verifies.-> TASK
+    T -.verifies.-> OWNERPET
+    T -.verifies.-> SCHED
+    T -.verifies.-> CONF
+    T -.verifies.-> EXPLAIN
+
+    classDef ui fill:#e8f0fe,stroke:#4285f4,color:#1a1a1a;
+    classDef domain fill:#e6f4ea,stroke:#34a853,color:#1a1a1a;
+    classDef test fill:#fff4e5,stroke:#f9ab00,color:#1a1a1a;
+    classDef state fill:#f3e8fd,stroke:#a142f4,color:#1a1a1a;
+    class IN,CTRL,GENBTN,CONFBTN,TABLE,RISKUI,PLANUI,WARNUI ui;
+    class TASK,RISK,OWNERPET,SCHED,CONF,PLAN,EXPLAIN domain;
+    class T test;
+    class STORE state;

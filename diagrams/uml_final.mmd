@@ -28,9 +28,14 @@ classDiagram
         +Priority priority
         +str pet_name
         +int recurrence_days
+        +int times_late
         +str id
         +bool completed
+        +RiskLevel risk_level
+        +str risk_explanation
+        +bool is_recurring
         +mark_complete() void
+        +assess_risk(today: date) RiskLevel
         +next_occurrence() Task?
     }
 
@@ -61,9 +66,17 @@ classDiagram
         LOW
     }
 
+    class RiskLevel {
+        <<enumeration>>
+        HIGH
+        MEDIUM
+        LOW
+    }
+
     Owner "1" --> "*" Pet : owns
     Pet "1" --> "*" Task : has
     Scheduler ..> Task : sorts/filters
     Scheduler ..> PlanEntry : produces
     PlanEntry "1" --> "1" Task : places
     Task --> Priority : uses
+    Task --> RiskLevel : assesses
