@@ -35,8 +35,63 @@ st.caption("Add a few care tasks. These feed directly into the scheduler below."
 
 if "tasks" not in st.session_state:
     st.session_state.tasks = []
+if "editing" not in st.session_state:
+    st.session_state.editing = None  # id of the task currently being edited
+if "spawned" not in st.session_state:
+    # ids of recurring tasks whose next occurrence has already been queued,
+    # so re-completing the same task doesn't stack duplicate future copies.
+    st.session_state.spawned = set()
 
 PRIORITY_MAP = {"low": Priority.LOW, "medium": Priority.MEDIUM, "high": Priority.HIGH}
+
+
+def _find_task(task_id):
+    """Return the task with this id from the session list, or None."""
+    return next((t for t in st.session_state.tasks if t.id == task_id), None)
+
+
+def toggle_complete(task_id):
+    """Flip a task's completion state (checkbox on_change callback).
+
+    Completing a recurring task queues its next occurrence — a fresh,
+    not-completed copy dated one interval later — so "done today" never
+    leaves the task stuck done tomorrow. The `spawned` guard keeps a
+    check/uncheck/re-check cycle from stacking duplicate future copies.
+    """
+    task = _find_task(task_id)
+    if task is None:
+        return
+    now_checked = st.session_state[f"done_{task_id}"]
+    if now_checked and not task.completed:
+        task.mark_complete()
+        if task.is_recurring and task_id not in st.session_state.spawned:
+            upcoming = task.next_occurrence()
+            if upcoming is not None:
+                upcoming.assess_risk()
+                st.session_state.tasks.append(upcoming)
+                st.session_state.spawned.add(task_id)
+    elif not now_checked and task.completed:
+        task.completed = False
+
+
+def delete_task(task_id):
+    """Remove a task from the schedule (delete-button on_click callback)."""
+    st.session_state.tasks = [
+        t for t in st.session_state.tasks if t.id != task_id
+    ]
+    st.session_state.spawned.discard(task_id)
+    if st.session_state.editing == task_id:
+        st.session_state.editing = None
+
+
+def start_edit(task_id):
+    """Open the edit form for a task (edit-button on_click callback)."""
+    st.session_state.editing = task_id
+
+
+def cancel_edit():
+    """Close the edit form without saving."""
+    st.session_state.editing = None
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -174,19 +229,96 @@ else:
         for t in high_risk:
             st.caption(f"• **{t.title}** — {t.risk_explanation}")
 
-    # Let the owner mark tasks complete so filter_by_completion is visible.
-    open_tasks = todo_tasks
-    if open_tasks:
-        done_title = st.selectbox(
-            "Mark a task complete",
-            [t.title for t in open_tasks],
-            key="complete_select",
-        )
-        if st.button("Mark complete"):
-            for t in open_tasks:
-                if t.title == done_title:
-                    t.mark_complete()
-                    break
+    # --- Per-task management: complete / edit / delete -----------------------
+    st.markdown("**Manage tasks**")
+    st.caption(
+        "Check to mark done, ✏️ to edit, 🗑️ to delete. Completing a recurring "
+        "task automatically queues its next occurrence."
+    )
+
+    if not tasks_to_show:
+        st.info("No tasks match the current view. Toggle 'Show completed tasks' above.")
+
+    for t in tasks_to_show:
+        c_done, c_info, c_edit, c_del = st.columns([1, 6, 1, 1])
+        with c_done:
+            st.checkbox(
+                "Done",
+                value=t.completed,
+                key=f"done_{t.id}",
+                on_change=toggle_complete,
+                args=(t.id,),
+                label_visibility="collapsed",
+            )
+        with c_info:
+            risk = RISK_BADGE.get(t.risk_level.name if t.risk_level else "", "—")
+            recur = " 🔁" if t.is_recurring else ""
+            struck = "~~" if t.completed else ""
+            st.markdown(
+                f"{struck}**{t.title}**{struck}{recur} · {t.pet_name} · "
+                f"{t.duration} min · Risk: {risk}"
+            )
+        with c_edit:
+            st.button("✏️", key=f"edit_{t.id}", on_click=start_edit, args=(t.id,),
+                      help="Edit this task")
+        with c_del:
+            st.button("🗑️", key=f"del_{t.id}", on_click=delete_task, args=(t.id,),
+                      help="Delete this task")
+
+    # --- Edit form: shown when a task's ✏️ button was clicked ----------------
+    editing_id = st.session_state.editing
+    task = _find_task(editing_id) if editing_id else None
+    if task is not None:
+        with st.form(f"edit_form_{task.id}"):
+            st.markdown(f"### ✏️ Editing: {task.title}")
+            e1, e2 = st.columns(2)
+            with e1:
+                e_title = st.text_input("Task title", value=task.title)
+                e_pet = st.selectbox(
+                    "Pet",
+                    pet_names,
+                    index=pet_names.index(task.pet_name)
+                    if task.pet_name in pet_names else 0,
+                )
+                e_duration = st.number_input(
+                    "Duration (minutes)", min_value=1, max_value=240,
+                    value=task.duration,
+                )
+                e_priority = st.selectbox(
+                    "Priority", ["low", "medium", "high"],
+                    index=task.priority.value - 1,  # LOW=1→0, MEDIUM=2→1, HIGH=3→2
+                )
+            with e2:
+                e_due = st.date_input("Due date", value=task.due_date or date.today())
+                e_start = st.time_input("Start time", value=task.start_time or time(8, 0))
+                e_times_late = st.number_input(
+                    "Times late previously", min_value=0, max_value=99,
+                    value=task.times_late,
+                )
+                e_recurring = st.checkbox("Recurring task", value=task.is_recurring)
+                e_recur_days = st.number_input(
+                    "Repeats every N days", min_value=1, max_value=365,
+                    value=task.recurrence_days or 1,
+                )
+            b_save, b_cancel = st.columns(2)
+            saved = b_save.form_submit_button("💾 Save changes", use_container_width=True)
+            canceled = b_cancel.form_submit_button("Cancel", use_container_width=True)
+
+        if saved:
+            task.title = e_title
+            task.pet_name = e_pet
+            task.duration = int(e_duration)
+            task.priority = PRIORITY_MAP[e_priority]
+            task.due_date = e_due
+            task.start_time = e_start
+            task.times_late = int(e_times_late)
+            task.recurrence_days = int(e_recur_days) if e_recurring else None
+            # Any of these can move the needle, so re-run the prediction.
+            task.assess_risk()
+            st.session_state.editing = None
+            st.rerun()
+        elif canceled:
+            cancel_edit()
             st.rerun()
 
 st.divider()
