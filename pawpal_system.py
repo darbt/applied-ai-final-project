@@ -48,6 +48,8 @@ class Task:
     # Filled in by assess_risk(); None until a prediction has been made.
     risk_level: RiskLevel | None = None
     risk_explanation: str = ""
+    # How much to trust the risk_level, in [0.0, 1.0]. None until assessed.
+    risk_confidence: float | None = None
 
     @property
     def is_recurring(self) -> bool:
@@ -57,6 +59,16 @@ class Task:
     def mark_complete(self) -> None:
         """Mark this task as done."""
         self.completed = True
+
+    def mark_late(self) -> int:
+        """Record that this occurrence was missed or finished late.
+
+        Bumps the lateness counter and returns the new total. A history of
+        lateness is the strongest signal assess_risk() has, so each call here
+        makes future predictions lean riskier (and more confident).
+        """
+        self.times_late += 1
+        return self.times_late
 
     def assess_risk(self, today: date | None = None) -> RiskLevel:
         """Predict how likely this task is to be missed or finished late.
@@ -122,6 +134,23 @@ class Task:
         else:
             self.risk_level = RiskLevel.LOW
 
+        # --- How confident are we in that label? ---------------------------
+        # Confidence answers "how much should you trust this prediction?" and
+        # is driven by two things:
+        #   1. Evidence — real signals (a track record, a concrete deadline)
+        #      beat guessing from defaults. History is the strongest evidence,
+        #      so more past-lateness observations raise confidence.
+        #   2. Margin — a score sitting right on a bucket edge (2 or 5) is a
+        #      near coin-flip; one deep inside a bucket is a safe call.
+        confidence = 0.35  # floor: priority, duration and recurrence are known
+        if self.times_late > 0:
+            confidence += min(self.times_late, 3) * 0.15  # +0.15 .. +0.45
+        if self.due_date is not None:
+            confidence += 0.20  # a real deadline anchors the pressure signal
+        margin = min(abs(score - 2), abs(score - 5))
+        confidence += min(margin, 2) * 0.05  # +0.00 .. +0.10 for a clear-cut score
+        self.risk_confidence = round(max(0.0, min(1.0, confidence)), 2)
+
         if reasons:
             self.risk_explanation = (
                 f"{self.risk_level.name} risk — " + "; ".join(reasons) + "."
@@ -131,7 +160,25 @@ class Task:
                 f"{self.risk_level.name} risk — no warning signs; "
                 "on track to finish on time."
             )
+        self.risk_explanation += (
+            f" (confidence: {self.confidence_label()}, "
+            f"{self.risk_confidence:.0%})"
+        )
         return self.risk_level
+
+    def confidence_label(self) -> str:
+        """Bucket risk_confidence into a plain-English word for display.
+
+        Returns "unknown" if assess_risk() hasn't run yet, otherwise
+        "high" (>= 0.75), "moderate" (>= 0.5), or "low".
+        """
+        if self.risk_confidence is None:
+            return "unknown"
+        if self.risk_confidence >= 0.75:
+            return "high"
+        if self.risk_confidence >= 0.5:
+            return "moderate"
+        return "low"
 
     def next_occurrence(self) -> Task | None:
         """Build the next instance of a recurring task, or None if one-off.

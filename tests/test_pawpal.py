@@ -6,6 +6,7 @@ from pawpal_system import (
     Pet,
     PlanEntry,
     Priority,
+    RiskLevel,
     Scheduler,
     Task,
 )
@@ -312,3 +313,251 @@ def test_explain_plan_warns_and_appends_lines_on_conflict():
         rendered = sched.explain_plan(plan)
 
     assert "double-booked" in rendered
+
+
+# ---------------------------------------------------------------------------
+# 7. Lateness counter: mark_late
+# ---------------------------------------------------------------------------
+def test_new_task_starts_with_no_lateness():
+    task = Task(title="Walk")
+
+    assert task.times_late == 0
+
+
+def test_mark_late_increments_and_returns_new_total():
+    task = Task(title="Walk")
+
+    assert task.mark_late() == 1
+    assert task.times_late == 1
+
+
+def test_mark_late_accumulates_across_calls():
+    task = Task(title="Meds")
+
+    task.mark_late()
+    task.mark_late()
+    total = task.mark_late()
+
+    assert total == 3
+    assert task.times_late == 3
+
+
+def test_mark_late_starts_from_an_existing_history():
+    # A task that already carries a history keeps counting up from there.
+    task = Task(title="Feed", times_late=2)
+
+    assert task.mark_late() == 3
+
+
+def test_mark_late_only_touches_the_counter():
+    # Recording lateness must not, by itself, complete the task.
+    task = Task(title="Walk")
+
+    task.mark_late()
+
+    assert task.completed is False
+
+
+def test_mark_late_feeds_the_risk_prediction():
+    # Enough recorded lateness should push a plain task's risk up a bucket.
+    task = Task(title="Walk", priority=Priority.HIGH)  # HIGH → no priority weight
+    baseline = task.assess_risk(today=date(2026, 7, 1))
+    assert baseline is RiskLevel.LOW
+
+    task.mark_late()
+    task.mark_late()  # 2 late → +4 to the score → crosses into MEDIUM
+    escalated = task.assess_risk(today=date(2026, 7, 1))
+
+    assert escalated is RiskLevel.MEDIUM
+
+
+# ---------------------------------------------------------------------------
+# 8. Risk prediction: assess_risk buckets and signals
+# ---------------------------------------------------------------------------
+def test_assess_risk_low_for_a_task_with_no_warning_signs():
+    # HIGH priority contributes no weight; nothing else fires.
+    task = Task(title="Walk", priority=Priority.HIGH)
+
+    level = task.assess_risk(today=date(2026, 7, 1))
+
+    assert level is RiskLevel.LOW
+    assert "on track" in task.risk_explanation
+
+
+def test_assess_risk_stores_result_on_the_task_and_returns_it():
+    task = Task(title="Walk", priority=Priority.HIGH)
+
+    returned = task.assess_risk(today=date(2026, 7, 1))
+
+    # The return value and the stored attribute agree.
+    assert returned is task.risk_level
+    assert task.risk_level is not None
+    assert task.risk_explanation.startswith("LOW risk")
+
+
+def test_assess_risk_overdue_task_is_higher_risk_than_future_task():
+    overdue = Task(title="Meds", priority=Priority.HIGH, due_date=date(2026, 6, 30))
+    future = Task(title="Meds", priority=Priority.HIGH, due_date=date(2026, 7, 30))
+
+    over_level = overdue.assess_risk(today=date(2026, 7, 1))
+    fut_level = future.assess_risk(today=date(2026, 7, 1))
+
+    # Overdue adds 3 to the score; a comfortably future deadline adds 0.
+    assert over_level is RiskLevel.MEDIUM
+    assert fut_level is RiskLevel.LOW
+    assert "already overdue" in overdue.risk_explanation
+
+
+def test_assess_risk_due_today_adds_pressure():
+    task = Task(title="Meds", priority=Priority.HIGH, due_date=date(2026, 7, 1))
+
+    task.assess_risk(today=date(2026, 7, 1))
+
+    assert "due today" in task.risk_explanation
+
+
+def test_assess_risk_history_is_the_strongest_signal():
+    # A long track record alone (3+ late) is enough to reach HIGH.
+    task = Task(title="Walk", priority=Priority.HIGH, times_late=3)
+
+    level = task.assess_risk(today=date(2026, 7, 1))
+
+    assert level is RiskLevel.HIGH
+    assert "late 3 times before" in task.risk_explanation
+
+
+def test_assess_risk_caps_the_history_weight():
+    # 4 late scores the same as 3 late (weight is capped), so an otherwise
+    # identical pair lands in the same bucket regardless of the extra slip.
+    three = Task(title="Walk", priority=Priority.HIGH, times_late=3)
+    four = Task(title="Walk", priority=Priority.HIGH, times_late=4)
+
+    assert three.assess_risk(today=date(2026, 7, 1)) is RiskLevel.HIGH
+    assert four.assess_risk(today=date(2026, 7, 1)) is RiskLevel.HIGH
+    # And the wording reflects the actual count, not the cap.
+    assert "late 4 times before" in four.risk_explanation
+
+
+def test_assess_risk_long_and_low_priority_and_recurring_stack_up():
+    # Long (+2) & low priority (+2) & recurring (+1) = 5 → HIGH, with no
+    # history and no deadline at all.
+    task = Task(
+        title="Deep clean crate",
+        duration=90,
+        priority=Priority.LOW,
+        recurrence_days=7,
+    )
+
+    level = task.assess_risk(today=date(2026, 7, 1))
+
+    assert level is RiskLevel.HIGH
+    assert "long task (over 60 min)" in task.risk_explanation
+    assert "low priority" in task.risk_explanation
+    assert "recurring routine" in task.risk_explanation
+
+
+def test_assess_risk_moderately_long_task_weighs_less_than_a_long_one():
+    moderate = Task(title="Groom", duration=45, priority=Priority.HIGH)  # +1
+    long = Task(title="Groom", duration=90, priority=Priority.HIGH)      # +2
+
+    assert moderate.assess_risk(today=date(2026, 7, 1)) is RiskLevel.LOW
+    assert long.assess_risk(today=date(2026, 7, 1)) is RiskLevel.MEDIUM
+    assert "moderately long task (over 30 min)" in moderate.risk_explanation
+
+
+def test_assess_risk_defaults_today_to_current_date():
+    # Called with no `today`, an overdue deadline (well in the past) should
+    # still register as overdue against the real current date.
+    task = Task(title="Meds", priority=Priority.HIGH, due_date=date(2000, 1, 1))
+
+    task.assess_risk()
+
+    assert "already overdue" in task.risk_explanation
+
+
+# ---------------------------------------------------------------------------
+# 9. Confidence scoring: how much to trust the risk label
+# ---------------------------------------------------------------------------
+def test_confidence_is_unknown_until_assessed():
+    task = Task(title="Walk")
+
+    assert task.risk_confidence is None
+    assert task.confidence_label() == "unknown"
+
+
+def test_assess_risk_sets_a_confidence_in_the_unit_range():
+    task = Task(title="Walk", times_late=1, due_date=date(2026, 7, 1))
+
+    task.assess_risk(today=date(2026, 7, 1))
+
+    assert task.risk_confidence is not None
+    assert 0.0 <= task.risk_confidence <= 1.0
+
+
+def test_more_lateness_history_raises_confidence():
+    # History is the strongest evidence, so a longer track record should make
+    # the prediction more confident — monotonically, up to the cap.
+    confidences = []
+    for n in range(0, 4):
+        task = Task(title="Walk", priority=Priority.HIGH, times_late=n)
+        task.assess_risk(today=date(2026, 7, 1))
+        confidences.append(task.risk_confidence)
+
+    assert confidences == sorted(confidences)      # non-decreasing
+    assert confidences[3] > confidences[0]          # and it actually grew
+
+
+def test_a_concrete_deadline_raises_confidence():
+    # Two otherwise-identical tasks; the one with a real due_date is a surer call.
+    dated = Task(title="Meds", priority=Priority.HIGH, due_date=date(2026, 7, 10))
+    undated = Task(title="Meds", priority=Priority.HIGH, due_date=None)
+
+    dated.assess_risk(today=date(2026, 7, 1))
+    undated.assess_risk(today=date(2026, 7, 1))
+
+    assert dated.risk_confidence > undated.risk_confidence
+
+
+def test_brand_new_task_with_no_evidence_has_low_confidence():
+    # No history, no deadline: we're mostly guessing from defaults.
+    task = Task(title="Walk", priority=Priority.HIGH)
+
+    task.assess_risk(today=date(2026, 7, 1))
+
+    assert task.confidence_label() == "low"
+
+
+def test_strong_history_gives_high_confidence():
+    # A well-established track record plus a real deadline is a high-confidence call.
+    task = Task(
+        title="Meds",
+        priority=Priority.HIGH,
+        times_late=3,
+        due_date=date(2026, 7, 1),
+    )
+
+    task.assess_risk(today=date(2026, 7, 1))
+
+    assert task.confidence_label() == "high"
+
+
+def test_confidence_label_tracks_the_numeric_thresholds():
+    task = Task(title="Walk")
+
+    task.risk_confidence = 0.80
+    assert task.confidence_label() == "high"
+    task.risk_confidence = 0.50
+    assert task.confidence_label() == "moderate"
+    task.risk_confidence = 0.49
+    assert task.confidence_label() == "low"
+
+
+def test_explanation_reports_the_confidence():
+    task = Task(title="Walk", priority=Priority.HIGH, times_late=3)
+
+    task.assess_risk(today=date(2026, 7, 1))
+
+    # The rendered explanation surfaces both the word and the percentage.
+    assert "confidence:" in task.risk_explanation
+    assert task.confidence_label() in task.risk_explanation
+    assert "%" in task.risk_explanation
